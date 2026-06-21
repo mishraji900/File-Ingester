@@ -212,23 +212,17 @@ export default function ValidationScreen({ rows, onBack, onContinue }) {
           <div className="step-num">1</div>
           <span>Select Files</span>
         </div>
-
         <div className="step-line" />
-
         <div className="step">
           <div className="step-num">2</div>
           <span>Map Sheets</span>
         </div>
-
         <div className="step-line" />
-
         <div className="step active">
           <div className="step-num">3</div>
           <span>Validate</span>
         </div>
-
         <div className="step-line" />
-
         <div className="step">
           <div className="step-num">4</div>
           <span>Process</span>
@@ -508,10 +502,20 @@ export default function ValidationScreen({ rows, onBack, onContinue }) {
                   onContinue(
                     result.files.map(rf => {
                       const local = files.find(f => f.rowId === rf.rowId);
+                      
+                      // Merge the backend column results (actualHeader) with the local config (numeric)
+                      const mergedColumns = (rf.columns || []).map((backendCol, idx) => {
+                        const localCol = local?.columns?.[idx] || {};
+                        return {
+                          ...backendCol,
+                          numeric: localCol.numeric || false
+                        };
+                      });
+
                       return {
                         ...rf,
                         fileLabel: local?.fileLabel,
-                        columns: local?.columns || []
+                        columns: mergedColumns
                       };
                     })
                   )

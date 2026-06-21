@@ -71,8 +71,8 @@ export default function ProcessingScreen({ files, onBack }) {
         ...f,
         target_sheet_name: guessTargetSheetName(f),
         use_for_summary: sheet.includes('total'),
-        index_col: f.columns?.[0]?.actualHeader || f.columns?.[0]?.expectedHeader || '',
-        sum_cols: f.columns?.filter(c => c.numeric).map(c => c.actualHeader || c.expectedHeader) || []
+        index_col: f.columns?.[0]?.actualHeader || f.columns?.[0]?.expectedHeader || f.columns?.[0]?.column || '',
+        sum_cols: f.columns?.filter(c => c.numeric).map(c => c.actualHeader || c.expectedHeader || c.column) || []
       };
     });
 

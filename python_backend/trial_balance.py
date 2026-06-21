@@ -104,8 +104,8 @@ def read_validated_df(xlsx_file_path: str, sheet_name: str) -> pd.DataFrame:
 
 def summarize_hierarchical_df(
     df: pd.DataFrame,
-    index_col: str,
-    sum_cols: list[str],
+    index_col: str | int,
+    sum_cols: list[str | int],
     group_headers: list[str],
     section_groups: list[str],
     roll_groups: list[str],
@@ -115,7 +115,14 @@ def summarize_hierarchical_df(
 ) -> dict[str, float]:
     df = df.copy()
     
-    valid_sum_cols = [c for c in sum_cols if c in df.columns]
+    # 1. Resolve index_col: Use string if passed, otherwise look up the column by integer index
+    idx_name = index_col if isinstance(index_col, str) else df.columns[index_col]
+    
+    # 2. Resolve sum_cols: Handle a mix of strings and integers
+    resolved_sum_cols = [c if isinstance(c, str) else df.columns[c] for c in sum_cols]
+    
+    # 3. Keep only the ones that exist to prevent KeyErrors
+    valid_sum_cols = [c for c in resolved_sum_cols if c in df.columns]
 
     for c in valid_sum_cols:
         df[c] = (
@@ -141,7 +148,8 @@ def summarize_hierarchical_df(
     current_section: str | None = None
 
     for _, row in df.iterrows():
-        label = row.get(index_col)
+        # 4. Use the resolved idx_name to fetch the row label safely
+        label = row.get(idx_name)
 
         if pd.isna(label) or str(label).strip() == "" or str(label).strip().lower() == "nan":
             current_section = None
