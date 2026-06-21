@@ -1,12 +1,24 @@
+# filename: app.py
 from flask import Flask, request, jsonify
 import os
-from converter import convert_to_xlsx
 import openpyxl
+from converter import convert_to_xlsx
 
 app = Flask(__name__)
 
-OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "converted")
+OUTPUT_DIR = os.environ.get(
+    "CONVERTED_DIR",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "converted")
+)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+
+def excel_column_name(index):
+    name = ""
+    while index > 0:
+        index, remainder = divmod(index - 1, 26)
+        name = chr(65 + remainder) + name
+    return name
 
 
 @app.route("/health", methods=["GET"])
@@ -16,7 +28,7 @@ def health():
 
 @app.route("/convert", methods=["POST"])
 def convert():
-    data = request.get_json()
+    data = request.get_json() or {}
     file_paths = data.get("files", [])
     results = []
 
@@ -41,7 +53,7 @@ def convert():
 
 @app.route("/sheets", methods=["POST"])
 def get_sheets():
-    data = request.get_json()
+    data = request.get_json() or {}
     file_path = data.get("file")
 
     try:
@@ -55,30 +67,39 @@ def get_sheets():
 
 @app.route("/preview", methods=["POST"])
 def preview():
-    data = request.get_json()
+    data = request.get_json() or {}
     file_path = data.get("file")
     sheet_name = data.get("sheet")
-    max_rows = data.get("max_rows", 20)
+    max_rows = max(1, int(data.get("max_rows", 20)))
 
     try:
         wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
         ws = wb[sheet_name]
 
-        rows_iter = ws.iter_rows(values_only=True)
-        header = next(rows_iter, None)
-        if header is None:
+        rows = list(ws.iter_rows(values_only=True, max_row=max_rows))
+        if not rows:
             wb.close()
             return jsonify({"columns": [], "rows": []})
 
-        columns = [str(c) if c is not None else f"col_{i}" for i, c in enumerate(header)]
+        max_cols = 0
+        for row in rows:
+            for i in range(len(row) - 1, -1, -1):
+                value = row[i]
+                if value is not None and str(value).strip() != "":
+                    max_cols = max(max_cols, i + 1)
+                    break
+
+        if max_cols == 0:
+            wb.close()
+            return jsonify({"columns": [], "rows": []})
+
+        columns = [excel_column_name(i) for i in range(1, max_cols + 1)]
 
         preview_rows = []
-        for i, row in enumerate(rows_iter):
-            if i >= max_rows:
-                break
+        for row in rows:
             row_dict = {}
-            for col_name, val in zip(columns, row):
-                row_dict[col_name] = val
+            for i in range(max_cols):
+                row_dict[columns[i]] = row[i] if i < len(row) else None
             preview_rows.append(row_dict)
 
         wb.close()

@@ -1,3 +1,4 @@
+// filename : UploadScreen.jsx
 import React, { useState } from 'react';
 
 export default function UploadScreen({ onContinue }) {
@@ -5,6 +6,34 @@ export default function UploadScreen({ onContinue }) {
   const [status, setStatus] = useState('');
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [workspaceDir, setWorkspaceDir] = useState('');
+  const [workspaceBusy, setWorkspaceBusy] = useState(false);
+
+  async function handleSelectWorkspace() {
+    setWorkspaceBusy(true);
+    setStatus('');
+
+    try {
+      const result = await window.api.selectWorkspaceDir();
+
+      if (!result || !result.workspaceDir) {
+        setWorkspaceBusy(false);
+        return;
+      }
+
+      if (!result.ready) {
+        setStatus('Workspace selected, but backend failed to start. Try again.');
+        setWorkspaceBusy(false);
+        return;
+      }
+
+      setWorkspaceDir(result.workspaceDir);
+    } catch (err) {
+      setStatus('Error selecting workspace: ' + err.message);
+    } finally {
+      setWorkspaceBusy(false);
+    }
+  }
 
   async function handleSelectFiles() {
     const files = await window.api.selectFiles();
@@ -38,6 +67,11 @@ export default function UploadScreen({ onContinue }) {
   function handleDrop(e) {
     e.preventDefault();
     setDragging(false);
+
+    if (!workspaceDir) {
+      setStatus('Select a workspace folder before adding files.');
+      return;
+    }
 
     const files = [...e.dataTransfer.files];
 
@@ -194,12 +228,54 @@ export default function UploadScreen({ onContinue }) {
           <div className="step-num">3</div>
           <span>Validate</span>
         </div>
+
+        <div className="step-line" />
+
+        <div className="step">
+          <div className="step-num">4</div>
+          <span>Process</span>
+        </div>
       </div>
 
       <div className="card">
         <div className="card-icon">📂</div>
 
         <h1>Select your files</h1>
+
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            margin: '10px 0 18px',
+            padding: '10px 12px',
+            background: 'rgba(181,242,58,0.05)',
+            border: '1px solid var(--border-accent)',
+            borderRadius: 8
+          }}
+        >
+          <button
+            type="button"
+            className="btn btn-ghost"
+            style={{ flex: '0 0 auto' }}
+            onClick={handleSelectWorkspace}
+            disabled={workspaceBusy}
+          >
+            {workspaceBusy ? 'Starting...' : workspaceDir ? 'Change Workspace Folder' : 'Select Workspace Folder *'}
+          </button>
+
+          <span
+            style={{
+              fontSize: 12,
+              color: workspaceDir ? 'var(--primary)' : 'var(--fg-muted)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap'
+            }}
+          >
+            {workspaceDir || 'Required — converted files are saved here.'}
+          </span>
+        </div>
 
         <p className="hint">
           Choose 2 Excel files — one containing
@@ -291,7 +367,7 @@ export default function UploadScreen({ onContinue }) {
           <button
             className="btn btn-ghost"
             onClick={handleSelectFiles}
-            disabled={busy}
+            disabled={busy || !workspaceDir}
           >
             Add Files
           </button>
@@ -301,6 +377,7 @@ export default function UploadScreen({ onContinue }) {
             onClick={handleContinue}
             disabled={
               busy ||
+              !workspaceDir ||
               planCount !== 1 ||
               trustCount !== 1
             }

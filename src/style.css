@@ -580,3 +580,57 @@ button.secondary:hover:not(:disabled) {
   background: #ff0000 !important;
   color: #ffff !important;
 }
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  padding: 16px;
+}
+
+.modal-content {
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--border-accent);
+  border-top: 2px solid var(--primary);
+  color: var(--fg);
+  padding: 28px;
+  border-radius: var(--radius-lg);
+  width: 82%;
+  max-height: 80vh;
+  overflow: auto;
+  backdrop-filter: blur(20px);
+}
+
+.modal-title {
+  margin: 0 56px 12px 0;
+}
+
+.modal-close {
+  position: absolute;
+  top: 70px;
+  right: 38px;
+  width: 36px;
+  height: 36px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: var(--primary);
+  color: #111318;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-close:hover {
+  background: #c8ff40;
+}
