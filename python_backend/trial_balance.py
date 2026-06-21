@@ -104,26 +104,35 @@ def read_validated_df(xlsx_file_path: str, sheet_name: str) -> pd.DataFrame:
 
 def summarize_hierarchical_df(
     df: pd.DataFrame,
-    index_col: str | int,
-    sum_cols: list[str | int],
+    index_col: str,
+    sum_cols: list[str],
     group_headers: list[str],
     section_groups: list[str],
     roll_groups: list[str],
     combine_groups: dict[str, list[str]],
     target_workbook,
     sheet_name: str,
+    log: list[str]
 ) -> dict[str, float]:
     df = df.copy()
     
-    # 1. Resolve index_col: Use string if passed, otherwise look up the column by integer index
-    idx_name = index_col if isinstance(index_col, str) else df.columns[index_col]
-    
-    # 2. Resolve sum_cols: Handle a mix of strings and integers
-    resolved_sum_cols = [c if isinstance(c, str) else df.columns[c] for c in sum_cols]
-    
-    # 3. Keep only the ones that exist to prevent KeyErrors
-    valid_sum_cols = [c for c in resolved_sum_cols if c in df.columns]
+    # Clean whitespace off headers to guarantee matching
+    df.columns = [str(c).strip() for c in df.columns]
+    index_col = str(index_col).strip()
+    clean_sum_cols = [str(c).strip() for c in sum_cols]
 
+    if index_col not in df.columns:
+        log.append(f"Summary Error: Description column '{index_col}' not found. Available columns: {df.columns.tolist()}")
+        return {}
+
+    valid_sum_cols = [c for c in clean_sum_cols if c in df.columns]
+    if not valid_sum_cols:
+        log.append(f"Summary Error: No numeric columns found from {clean_sum_cols}. Available columns: {df.columns.tolist()}")
+        return {}
+
+    log.append(f"Summary Info: Processing '{index_col}' against numeric columns: {valid_sum_cols}")
+
+    # Standardize numeric strings to floats
     for c in valid_sum_cols:
         df[c] = (
             df[c]
@@ -146,10 +155,10 @@ def summarize_hierarchical_df(
 
     raw_results: dict[str, float] = {}
     current_section: str | None = None
+    processed_count = 0
 
     for _, row in df.iterrows():
-        # 4. Use the resolved idx_name to fetch the row label safely
-        label = row.get(idx_name)
+        label = row.get(index_col)
 
         if pd.isna(label) or str(label).strip() == "" or str(label).strip().lower() == "nan":
             current_section = None
@@ -158,6 +167,8 @@ def summarize_hierarchical_df(
         label_str = str(label).strip()
         label_lower = label_str.lower()
         num_val = sum(float(row[c]) for c in valid_sum_cols if pd.notna(row[c]))
+
+        processed_count += 1
 
         if label_lower in header_lookup:
             canonical = header_lookup[label_lower]
@@ -181,9 +192,14 @@ def summarize_hierarchical_df(
         if current_section is not None:
             sec_lower = current_section.lower()
             if sec_lower in roll_lookup and "roll" in label_lower:
-                raw_results[f"{current_section} (Rollover)"] += num_val
+                raw_results[f"{current_section} (Rollover)"] = raw_results.get(f"{current_section} (Rollover)", 0.0) + num_val
             else:
-                raw_results[current_section] += num_val
+                raw_results[current_section] = raw_results.get(current_section, 0.0) + num_val
+        else:
+            # Fallback: Capture everything else as a generic line item so no data is lost!
+            raw_results[label_str] = raw_results.get(label_str, 0.0) + num_val
+
+    log.append(f"Summary Info: Filtered and aggregated {processed_count} valid rows.")
 
     consumed = {h.strip().lower() for headers in combine_groups.values() for h in headers}
     results = {k: v for k, v in raw_results.items() if k.lower() not in consumed}
@@ -281,6 +297,7 @@ def build_trial_balance(payload: dict[str, Any]) -> dict[str, Any]:
                 combine_groups=summary_cfg.get("combine_groups", {}),
                 target_workbook=template_wb,
                 sheet_name=summary_cfg.get("sheet_name", "Summary"),
+                log=log
             )
             log.append(f"Summary sheet '{summary_cfg.get('sheet_name', 'Summary')}' written.")
         except Exception as exc:
