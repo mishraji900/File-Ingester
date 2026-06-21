@@ -567,11 +567,11 @@ export default function ValidationScreen({ rows, onBack, onContinue }) {
             ))}
           </div>
         )}
-
-        {previewRow && (
-          <PreviewModal row={previewRow} onClose={() => setPreviewRow(null)} />
-        )}
       </div>
+      
+      {previewRow && (
+        <PreviewModal row={previewRow} onClose={() => setPreviewRow(null)} />
+      )}
     </div>
   );
 }

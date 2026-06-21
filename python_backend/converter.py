@@ -14,6 +14,27 @@ def _sanitize(value: str) -> str:
     return value.replace("\n", " ").replace("\t", " ").strip()
 
 
+def _remove_empty_columns(ws) -> None:
+    """Physically removes columns that contain absolutely no data to ensure contiguous A, B, C mapping."""
+    if ws.max_column is None or ws.max_column == 0:
+        return
+        
+    cols_to_delete = []
+    # Traverse backwards so deleting a column doesn't shift the indices of columns we haven't checked yet
+    for col_idx in range(ws.max_column, 0, -1):
+        is_empty = True
+        for row_idx in range(1, ws.max_row + 1):
+            val = ws.cell(row=row_idx, column=col_idx).value
+            if val is not None and str(val).strip() != "":
+                is_empty = False
+                break
+        if is_empty:
+            cols_to_delete.append(col_idx)
+
+    for col_idx in cols_to_delete:
+        ws.delete_cols(col_idx)
+
+
 def convert_to_xlsx(file_path: str, output_dir: str) -> str:
     base_name = os.path.splitext(os.path.basename(file_path))[0]
     output_path = os.path.join(output_dir, f"{base_name}.xlsx")
@@ -32,6 +53,7 @@ def convert_to_xlsx(file_path: str, output_dir: str) -> str:
 def _convert_modern(file_path: str, output_path: str) -> None:
     wb = load_workbook(file_path, keep_vba=False)
     for ws in wb.worksheets:
+        _remove_empty_columns(ws)
         for row in ws.iter_rows():
             for cell in row:
                 if isinstance(cell.value, str):
@@ -74,6 +96,9 @@ def _convert_xls(file_path: str, output_path: str) -> None:
             if col_info and col_info.width > 0:
                 col_letter = get_column_letter(col_idx + 1)
                 xlsx_ws.column_dimensions[col_letter].width = col_info.width / 256.0
+                
+        # Apply empty column removal to the newly built xlsx sheet
+        _remove_empty_columns(xlsx_ws)
 
     xlsx_wb.save(output_path)
 
