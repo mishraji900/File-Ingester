@@ -93,13 +93,21 @@ def preview():
             wb.close()
             return jsonify({"columns": [], "rows": []})
 
-        columns = [excel_column_name(i) for i in range(1, max_cols + 1)]
+        # Issue 1: Find completely empty columns up to max_cols to drop them visually
+        valid_col_indices = []
+        for i in range(max_cols):
+            has_val = any(r[i] is not None and str(r[i]).strip() != "" for r in rows if i < len(r))
+            if has_val:
+                valid_col_indices.append(i)
+
+        # Retain original Excel letter mapping
+        columns = [excel_column_name(i + 1) for i in valid_col_indices]
 
         preview_rows = []
         for row in rows:
             row_dict = {}
-            for i in range(max_cols):
-                row_dict[columns[i]] = row[i] if i < len(row) else None
+            for col_idx, col_name in zip(valid_col_indices, columns):
+                row_dict[col_name] = row[col_idx] if col_idx < len(row) else None
             preview_rows.append(row_dict)
 
         wb.close()

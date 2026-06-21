@@ -15,7 +15,6 @@ from openpyxl.styles import PatternFill, Border, Font, Alignment
 # ---------- sheet styling ----------
 
 def setup_sheet_styling(target_sheet, note_text: str | None = None) -> None:
-    """White background, no borders. Optional A1 note."""
     if note_text:
         target_sheet["A1"] = note_text
         target_sheet["A1"].font = Font(name="Calibri", size=11, bold=True, color="0000FF")
@@ -39,9 +38,6 @@ def copy_xlsx_to_sheet(
     target_sheet_name: str,
     row_offset: int = 2,
 ) -> tuple[str | None, str | None]:
-    """Copies the FIRST sheet of `xlsx_file_path` (our validated files only ever
-    contain one sheet) into target_workbook as target_sheet_name, pasted at A3.
-    Returns (actual_source_sheet_name, error_message)."""
     try:
         source_wb = load_workbook(xlsx_file_path, data_only=False)
     except Exception as exc:
@@ -109,7 +105,7 @@ def read_validated_df(xlsx_file_path: str, sheet_name: str) -> pd.DataFrame:
 def summarize_hierarchical_df(
     df: pd.DataFrame,
     index_col: str,
-    sum_col: str,
+    sum_cols: list[str],
     group_headers: list[str],
     section_groups: list[str],
     roll_groups: list[str],
@@ -118,15 +114,19 @@ def summarize_hierarchical_df(
     sheet_name: str,
 ) -> dict[str, float]:
     df = df.copy()
-    df[sum_col] = (
-        df[sum_col]
-        .astype(str)
-        .str.replace(",", "", regex=False)
-        .str.replace("$", "", regex=False)
-        .str.strip()
-        .replace({"": "0", "-": "0", "N/A": "0", "n/a": "0", "nan": "0", "None": "0"})
-    )
-    df[sum_col] = pd.to_numeric(df[sum_col], errors="coerce").fillna(0.0)
+    
+    valid_sum_cols = [c for c in sum_cols if c in df.columns]
+
+    for c in valid_sum_cols:
+        df[c] = (
+            df[c]
+            .astype(str)
+            .str.replace(",", "", regex=False)
+            .str.replace("$", "", regex=False)
+            .str.strip()
+            .replace({"": "0", "-": "0", "N/A": "0", "n/a": "0", "nan": "0", "None": "0"})
+        )
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
 
     header_lookup = {h.strip().lower(): h for h in group_headers}
     section_lookup = {s.strip().lower() for s in section_groups}
@@ -141,7 +141,7 @@ def summarize_hierarchical_df(
     current_section: str | None = None
 
     for _, row in df.iterrows():
-        label = row[index_col]
+        label = row.get(index_col)
 
         if pd.isna(label) or str(label).strip() == "" or str(label).strip().lower() == "nan":
             current_section = None
@@ -149,7 +149,7 @@ def summarize_hierarchical_df(
 
         label_str = str(label).strip()
         label_lower = label_str.lower()
-        num_val = float(row[sum_col])
+        num_val = sum(float(row[c]) for c in valid_sum_cols if pd.notna(row[c]))
 
         if label_lower in header_lookup:
             canonical = header_lookup[label_lower]
@@ -229,7 +229,7 @@ def build_trial_balance(payload: dict[str, Any]) -> dict[str, Any]:
     copied_sheets: list[dict[str, Any]] = []
     summary_df = None
     summary_index_col = None
-    summary_sum_col = None
+    summary_sum_cols = []
 
     for row in rows:
         validated_path = row.get("validated_path")
@@ -256,17 +256,17 @@ def build_trial_balance(payload: dict[str, Any]) -> dict[str, Any]:
             try:
                 summary_df = read_validated_df(validated_path, source_sheet_name)
                 summary_index_col = row.get("index_col")
-                summary_sum_col = row.get("sum_col")
+                summary_sum_cols = row.get("sum_cols", [])
             except Exception as exc:
                 log.append(f"Row {row_id}: unable to read for summary: {exc}")
 
     summary_result = None
-    if summary_cfg and summary_df is not None and summary_index_col and summary_sum_col:
+    if summary_cfg and summary_df is not None and summary_index_col and summary_sum_cols:
         try:
             summary_result = summarize_hierarchical_df(
                 df=summary_df,
                 index_col=summary_index_col,
-                sum_col=summary_sum_col,
+                sum_cols=summary_sum_cols,
                 group_headers=summary_cfg.get("group_headers", []),
                 section_groups=summary_cfg.get("section_groups", []),
                 roll_groups=summary_cfg.get("roll_groups", []),

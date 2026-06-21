@@ -166,11 +166,17 @@ export default function MappingScreen({ payload, onBack, onContinue }) {
                     value={row.selectedSheet}
                     onChange={e => handleSheetChange(row.rowId, e.target.value)}
                   >
-                    {row.sheetOptions.map(sheet => (
-                      <option key={sheet} value={sheet}>
-                        {sheet}
-                      </option>
-                    ))}
+                    <option value="" disabled>-- Select Sheet --</option>
+                    {row.sheetOptions.map(sheet => {
+                      const isUsed = rows.some(
+                        r => r.rowId !== row.rowId && r.filePath === row.filePath && r.selectedSheet === sheet
+                      );
+                      return (
+                        <option key={sheet} value={sheet} disabled={isUsed}>
+                          {sheet}
+                        </option>
+                      );
+                    })}
                   </select>
                 </td>
                 <td>

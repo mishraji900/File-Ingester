@@ -2,11 +2,11 @@
 import React, { useEffect, useState } from 'react';
 
 function guessTargetSheetName(row) {
+  const sheet = (row.sheetName || '').toLowerCase();
   const label = (row.fileLabel || '').toLowerCase();
-  if (label.includes('net trust assets')) return '2. Summary of Net Trust Asset';
-  if (row.rowId === 'plan-1') return '3. Summary of Plan Ops';
-  if (row.rowId === 'plan-2') return '4. Loan';
-  return row.rowId || 'Sheet';
+  if (label.includes('net trust')) return '2. Summary of Net Trust Asset';
+  if (sheet.includes('loan')) return '4. Loan';
+  return '3. Summary of Plan Ops';
 }
 
 function parseLines(text) {
@@ -17,7 +17,6 @@ function parseLines(text) {
 }
 
 function parseCombineGroups(text) {
-  // one per line: "Output Name: Input A, Input B"
   const result = {};
   for (const line of parseLines(text)) {
     const [outName, rest] = line.split(':');
@@ -65,19 +64,28 @@ const DEFAULT_COMBINE_GROUPS_TEXT =
   'Adjustments: Adjustment (+), Adjustment (-)\nRealized/Unrealized Gain Loss: Realized Gain/(Loss), Unrealized Gain/(Loss)';
 
 export default function ProcessingScreen({ files, onBack }) {
-  const [rows, setRows] = useState(() =>
-    files.map(f => ({
-      ...f,
-      target_sheet_name: guessTargetSheetName(f),
-      use_for_summary: false,
-      index_col: f.columns?.[0]?.expected_header || '',
-      sum_col: f.columns?.find(c => c.numeric)?.expected_header || ''
-    }))
-  );
+  const [rows, setRows] = useState(() => {
+    const initialRows = files.map(f => {
+      const sheet = (f.sheetName || '').toLowerCase();
+      return {
+        ...f,
+        target_sheet_name: guessTargetSheetName(f),
+        use_for_summary: sheet.includes('total'),
+        index_col: f.columns?.[0]?.actualHeader || f.columns?.[0]?.expectedHeader || '',
+        sum_cols: f.columns?.filter(c => c.numeric).map(c => c.actualHeader || c.expectedHeader) || []
+      };
+    });
+
+    if (!initialRows.some(r => r.use_for_summary)) {
+      const planRow = initialRows.find(r => r.rowId.includes('plan'));
+      if (planRow) planRow.use_for_summary = true;
+    }
+
+    return initialRows;
+  });
 
   const [templatePath, setTemplatePath] = useState('');
   const [reportingDate, setReportingDate] = useState('');
-  const [summaryEnabled, setSummaryEnabled] = useState(false);
   const [summarySheetName, setSummarySheetName] = useState('6. SOPO Summary');
   const [groupHeadersText, setGroupHeadersText] = useState(DEFAULT_GROUP_HEADERS.join('\n'));
   const [sectionGroupsText, setSectionGroupsText] = useState(DEFAULT_SECTION_GROUPS.join('\n'));
@@ -122,24 +130,23 @@ export default function ProcessingScreen({ files, onBack }) {
     }
 
     let summary = null;
-    if (summaryEnabled) {
-      const summaryRow = rows.find(r => r.use_for_summary);
-      if (!summaryRow) {
-        setError('Summary is enabled but no row is marked as the summary source.');
-        return;
-      }
-      if (!summaryRow.index_col || !summaryRow.sum_col) {
-        setError(`Row ${summaryRow.rowId}: pick both a description column and a numeric column for the summary.`);
-        return;
-      }
-      summary = {
-        sheet_name: summarySheetName,
-        group_headers: parseLines(groupHeadersText),
-        section_groups: parseLines(sectionGroupsText),
-        roll_groups: parseLines(rollGroupsText),
-        combine_groups: parseCombineGroups(combineGroupsText)
-      };
+    const summaryRow = rows.find(r => r.use_for_summary);
+    if (!summaryRow) {
+      setError('No row is marked as the summary source.');
+      return;
     }
+    if (!summaryRow.index_col || summaryRow.sum_cols.length === 0) {
+      setError(`Row ${summaryRow.rowId}: Pick both a description column and at least one numeric column for the summary.`);
+      return;
+    }
+    
+    summary = {
+      sheet_name: summarySheetName,
+      group_headers: parseLines(groupHeadersText),
+      section_groups: parseLines(sectionGroupsText),
+      roll_groups: parseLines(rollGroupsText),
+      combine_groups: parseCombineGroups(combineGroupsText)
+    };
 
     setRunning(true);
     try {
@@ -152,7 +159,7 @@ export default function ProcessingScreen({ files, onBack }) {
           target_sheet_name: r.target_sheet_name,
           use_for_summary: r.use_for_summary,
           index_col: r.index_col,
-          sum_col: r.sum_col
+          sum_cols: r.sum_cols.filter(Boolean)
         })),
         summary
       };
@@ -228,7 +235,6 @@ export default function ProcessingScreen({ files, onBack }) {
           )}
         </div>
 
-        {/* per-row mapping */}
         {rows.map(row => (
           <div
             key={row.rowId}
@@ -252,27 +258,34 @@ export default function ProcessingScreen({ files, onBack }) {
                   value={row.index_col}
                   onChange={e => updateRow(row.rowId, 'index_col', e.target.value)}
                   style={inputStyle()}
-                  disabled={!summaryEnabled || !row.use_for_summary}
+                  disabled={!row.use_for_summary}
                 >
                   <option value="">—</option>
-                  {(row.columns || []).map(c => (
-                    <option key={c.column} value={c.expected_header}>{c.expected_header || c.column}</option>
-                  ))}
+                  {(row.columns || []).map(c => {
+                    const headerName = c.actualHeader || c.expectedHeader || c.column;
+                    return <option key={c.column} value={headerName}>{headerName}</option>;
+                  })}
                 </select>
               </Field>
 
-              <Field label="Numeric column (for summary)">
-                <select
-                  value={row.sum_col}
-                  onChange={e => updateRow(row.rowId, 'sum_col', e.target.value)}
-                  style={inputStyle()}
-                  disabled={!summaryEnabled || !row.use_for_summary}
-                >
-                  <option value="">—</option>
-                  {(row.columns || []).filter(c => c.numeric).map(c => (
-                    <option key={c.column} value={c.expected_header}>{c.expected_header || c.column}</option>
-                  ))}
-                </select>
+              <Field label="Numeric columns (for summary)">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, background: 'var(--bg)', padding: 8, borderRadius: 7, border: '1px solid var(--border)' }}>
+                  {(row.columns || []).filter(c => c.numeric).map(c => {
+                    const headerName = c.actualHeader || c.expectedHeader || c.column;
+                    const isChecked = row.sum_cols.includes(headerName);
+                    return (
+                      <label key={c.column} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, opacity: row.use_for_summary ? 1 : 0.5 }}>
+                        <input type="checkbox" checked={isChecked} disabled={!row.use_for_summary} onChange={(e) => {
+                          const newCols = e.target.checked 
+                            ? [...row.sum_cols, headerName] 
+                            : row.sum_cols.filter(x => x !== headerName);
+                          updateRow(row.rowId, 'sum_cols', newCols);
+                        }} />
+                        {headerName}
+                      </label>
+                    );
+                  })}
+                </div>
               </Field>
 
               <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--fg-muted)', alignSelf: 'end', paddingBottom: 8 }}>
@@ -280,7 +293,6 @@ export default function ProcessingScreen({ files, onBack }) {
                   type="radio"
                   name="summary-source-row"
                   checked={row.use_for_summary}
-                  disabled={!summaryEnabled}
                   onChange={() => selectSummaryRow(row.rowId)}
                 />
                 Use as summary source
@@ -289,35 +301,27 @@ export default function ProcessingScreen({ files, onBack }) {
           </div>
         ))}
 
-        {/* summary config */}
         <div style={{ marginTop: 24, padding: 16, background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: 12 }}>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginBottom: 14 }}>
-            <input type="checkbox" checked={summaryEnabled} onChange={e => setSummaryEnabled(e.target.checked)} />
-            Generate hierarchical summary sheet
-          </label>
+          <h3 style={{ marginBottom: 14 }}>Hierarchical Summary Configuration</h3>
 
-          {summaryEnabled && (
-            <>
-              <Field label="Summary sheet name">
-                <input value={summarySheetName} onChange={e => setSummarySheetName(e.target.value)} style={{ ...inputStyle(), marginBottom: 14 }} />
-              </Field>
+          <Field label="Summary sheet name">
+            <input value={summarySheetName} onChange={e => setSummarySheetName(e.target.value)} style={{ ...inputStyle(), marginBottom: 14 }} />
+          </Field>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14 }}>
-                <Field label="Group headers (one per line)">
-                  <textarea value={groupHeadersText} onChange={e => setGroupHeadersText(e.target.value)} rows={6} style={{ ...inputStyle(), resize: 'vertical' }} />
-                </Field>
-                <Field label="Section groups (one per line)">
-                  <textarea value={sectionGroupsText} onChange={e => setSectionGroupsText(e.target.value)} rows={6} style={{ ...inputStyle(), resize: 'vertical' }} />
-                </Field>
-                <Field label="Roll groups (one per line)">
-                  <textarea value={rollGroupsText} onChange={e => setRollGroupsText(e.target.value)} rows={6} style={{ ...inputStyle(), resize: 'vertical' }} />
-                </Field>
-                <Field label='Combine groups ("Output: A, B" per line)'>
-                  <textarea value={combineGroupsText} onChange={e => setCombineGroupsText(e.target.value)} rows={6} style={{ ...inputStyle(), resize: 'vertical' }} />
-                </Field>
-              </div>
-            </>
-          )}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 14 }}>
+            <Field label="Group headers (one per line)">
+              <textarea value={groupHeadersText} onChange={e => setGroupHeadersText(e.target.value)} rows={6} style={{ ...inputStyle(), resize: 'vertical' }} />
+            </Field>
+            <Field label="Section groups (one per line)">
+              <textarea value={sectionGroupsText} onChange={e => setSectionGroupsText(e.target.value)} rows={6} style={{ ...inputStyle(), resize: 'vertical' }} />
+            </Field>
+            <Field label="Roll groups (one per line)">
+              <textarea value={rollGroupsText} onChange={e => setRollGroupsText(e.target.value)} rows={6} style={{ ...inputStyle(), resize: 'vertical' }} />
+            </Field>
+            <Field label='Combine groups ("Output: A, B" per line)'>
+              <textarea value={combineGroupsText} onChange={e => setCombineGroupsText(e.target.value)} rows={6} style={{ ...inputStyle(), resize: 'vertical' }} />
+            </Field>
+          </div>
         </div>
 
         {error && <div className="status" style={{ marginTop: 20 }}>{error}</div>}
