@@ -1,0 +1,581 @@
+// filename: src/components/ValidationScreen.jsx
+import React, { useEffect, useState } from 'react';
+import PreviewModal from './PreviewModal.jsx';
+
+function colLetterToIndex(value) {
+  const text = String(value || '').trim().toUpperCase();
+  if (!text) return NaN;
+
+  let result = 0;
+  for (const ch of text) {
+    if (ch < 'A' || ch > 'Z') return NaN;
+    result = result * 26 + (ch.charCodeAt(0) - 64);
+  }
+  return result;
+}
+
+function newColumnRule() {
+  return {
+    column: '',
+    expected_header: '',
+    numeric: false
+  };
+}
+
+function resizeColumnRules(count, existing = []) {
+  const safeCount = Math.max(0, Number(count) || 0);
+  return Array.from({ length: safeCount }, (_, index) => existing[index] || newColumnRule());
+}
+
+function buildFileRuleFromRow(row) {
+  return {
+    rowId: row.rowId,
+    fileLabel: row.fileLabel,
+    file_path: row.filePath,
+    sheet_name: row.selectedSheet,
+    header_row: 1,
+    data_start_row: 2,
+    data_end_row: 100,
+    start_col: 'A',
+    end_col: 'C',
+    number_of_columns: 3,
+    columns: resizeColumnRules(3)
+  };
+}
+
+function getFileValidationError(file) {
+  const start = colLetterToIndex(file.start_col);
+  const end = colLetterToIndex(file.end_col);
+  const count = Number(file.number_of_columns) || 0;
+
+  if (Number.isNaN(start) || Number.isNaN(end)) {
+    return 'Start column and End column must be valid Excel column letters.';
+  }
+
+  if (start > end) {
+    return `Start column cannot be after End column. You entered ${file.start_col}:${file.end_col}.`;
+  }
+
+  const rangeCount = end - start + 1;
+  if (count > rangeCount) {
+    return `Number of headers out of bound. Selected range ${file.start_col}:${file.end_col} contains only ${rangeCount} columns.`;
+  }
+
+  return '';
+}
+
+function inputStyle(width = '100%') {
+  return {
+    width,
+    padding: '10px 12px',
+    borderRadius: 8,
+    border: '1px solid var(--border)',
+    background: 'var(--bg)',
+    color: 'var(--fg)'
+  };
+}
+
+function Field({ label, children }) {
+  return (
+    <label
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 6,
+        fontSize: 12,
+        color: 'var(--fg-muted)'
+      }}
+    >
+      <span style={{ fontWeight: 600, letterSpacing: 0.2 }}>{label}</span>
+      {children}
+    </label>
+  );
+}
+
+export default function ValidationScreen({ rows, onBack, onContinue }) {
+  const [files, setFiles] = useState(() => rows.map(buildFileRuleFromRow));
+  const [generateExcelReport, setGenerateExcelReport] = useState(true);
+  const [reportDir, setReportDir] = useState('');
+  const [result, setResult] = useState(null);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState('');
+  const [previewRow, setPreviewRow] = useState(null);
+
+  useEffect(() => {
+    async function loadWorkspace() {
+      try {
+        const ws = await window.api.getWorkspaceDir();
+        setReportDir(ws?.reportDir || '');
+      } catch {
+        setReportDir('');
+      }
+    }
+    loadWorkspace();
+  }, []);
+
+  useEffect(() => {
+    setFiles(rows.map(buildFileRuleFromRow));
+    setResult(null);
+    setError('');
+  }, [rows]);
+
+  function updateFile(fileIndex, key, value) {
+    setFiles(current =>
+      current.map((file, index) => (index === fileIndex ? { ...file, [key]: value } : file))
+    );
+  }
+
+  function updateNumberOfColumns(fileIndex, value) {
+    const safeValue = Math.max(0, Number(value) || 0);
+
+    setFiles(current =>
+      current.map((file, index) =>
+        index === fileIndex
+          ? {
+              ...file,
+              number_of_columns: safeValue,
+              columns: resizeColumnRules(safeValue, file.columns)
+            }
+          : file
+      )
+    );
+  }
+
+  function updateColumn(fileIndex, columnIndex, key, value) {
+    setFiles(current =>
+      current.map((file, index) => {
+        if (index !== fileIndex) return file;
+
+        const columns = file.columns.map((column, idx) =>
+          idx === columnIndex ? { ...column, [key]: value } : column
+        );
+
+        return { ...file, columns };
+      })
+    );
+  }
+
+  async function runValidation() {
+    if (!window?.api?.runValidation) {
+      setError('Validation bridge not loaded. Restart the Electron app.');
+      return;
+    }
+
+    if (files.length !== rows.length) {
+      setError('Validation file count does not match mapped file/sheet pairs.');
+      return;
+    }
+
+    const fileError = files
+      .map((file, index) => ({ index, error: getFileValidationError(file) }))
+      .find(item => item.error);
+
+    if (fileError) {
+      setError(`File ${fileError.index + 1}: ${fileError.error}`);
+      return;
+    }
+
+    setRunning(true);
+    setError('');
+    setResult(null);
+
+    try {
+      const payload = {
+        generate_excel_report: generateExcelReport,
+        files: files.map(({ rowId, fileLabel, ...file }) => ({ ...file, row_id: rowId }))
+      };
+
+      const response = await window.api.runValidation(payload);
+
+      if (!response.success && response.message) {
+        throw new Error(response.message);
+      }
+
+      setResult(response);
+    } catch (err) {
+      setError(err.message || 'Validation failed.');
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  async function openReport() {
+    if (result?.reportPath && window?.api?.openReport) {
+      await window.api.openReport(result.reportPath);
+    }
+  }
+
+  return (
+    <div className="page" style={{ justifyContent: 'flex-start', paddingTop: 40 }}>
+      <div className="steps">
+        <div className="step">
+          <div className="step-num">1</div>
+          <span>Select Files</span>
+        </div>
+        <div className="step-line" />
+        <div className="step">
+          <div className="step-num">2</div>
+          <span>Map Sheets</span>
+        </div>
+        <div className="step-line" />
+        <div className="step active">
+          <div className="step-num">3</div>
+          <span>Validate</span>
+        </div>
+        <div className="step-line" />
+        <div className="step">
+          <div className="step-num">4</div>
+          <span>Process</span>
+        </div>
+      </div>
+
+      <div className="container">
+        <div className="card-icon">✅</div>
+        <h1>Validate mapped sheets</h1>
+        <p className="hint">
+          File and sheet values come directly from the Mapping step. Validation runs only for the
+          mapped file/sheet pairs shown below.
+        </p>
+
+        <div
+          style={{
+            display: 'flex',
+            gap: 12,
+            alignItems: 'end',
+            flexWrap: 'wrap',
+            marginTop: 18
+          }}
+        >
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+            <input
+              type="checkbox"
+              checked={generateExcelReport}
+              onChange={e => setGenerateExcelReport(e.target.checked)}
+            />
+            Generate Excel report
+          </label>
+
+          <Field label="Report output directory">
+            <div
+              style={{
+                ...inputStyle(),
+                minWidth: 260,
+                color: 'var(--fg-muted)',
+                background: 'var(--card2)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap'
+              }}
+              title={reportDir}
+            >
+              {reportDir || 'workspace/output/validation_control_totals'}
+            </div>
+          </Field>
+
+          <button className="btn btn-ghost" onClick={onBack} disabled={running}>
+            ← Back
+          </button>
+
+          <button className="btn btn-primary" onClick={runValidation} disabled={running}>
+            {running ? 'Running...' : 'Run Validation'}
+          </button>
+
+          {result?.reportPath && (
+            <button className="btn btn-ghost" onClick={openReport}>
+              Open Report
+            </button>
+          )}
+        </div>
+
+        {files.map((file, fileIndex) => {
+          const fileError = getFileValidationError(file);
+
+          return (
+            <div
+              key={file.rowId}
+              style={{
+                marginTop: 24,
+                padding: 18,
+                background: 'rgba(255,255,255,0.03)',
+                border: '1px solid var(--border)',
+                borderRadius: 12
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                <h3 style={{ margin: 0 }}>
+                  {file.rowId} — {file.sheet_name}
+                </h3>
+                <button
+                  className="preview-btn"
+                  onClick={() =>
+                    setPreviewRow({
+                      fileLabel: file.fileLabel,
+                      filePath: file.file_path,
+                      selectedSheet: file.sheet_name
+                    })
+                  }
+                >
+                  Preview Sheet Data
+                </button>
+              </div>
+
+              <table>
+                <tbody>
+                  <tr>
+                    <td style={{ width: 180, color: 'var(--fg-muted)' }}>File path</td>
+                    <td>{file.file_path}</td>
+                  </tr>
+                  <tr>
+                    <td style={{ color: 'var(--fg-muted)' }}>Sheet name</td>
+                    <td>{file.sheet_name}</td>
+                  </tr>
+                </tbody>
+              </table>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+                  gap: 12,
+                  marginTop: 16
+                }}
+              >
+                <Field label="Header row">
+                  <input
+                    type="number"
+                    value={file.header_row}
+                    onChange={e => updateFile(fileIndex, 'header_row', Number(e.target.value) || 0)}
+                    placeholder="e.g. 1"
+                    style={inputStyle()}
+                  />
+                </Field>
+
+                <Field label="Data start row">
+                  <input
+                    type="number"
+                    value={file.data_start_row}
+                    onChange={e =>
+                      updateFile(fileIndex, 'data_start_row', Number(e.target.value) || 0)
+                    }
+                    placeholder="e.g. 2"
+                    style={inputStyle()}
+                  />
+                </Field>
+
+                <Field label="Data end row">
+                  <input
+                    type="number"
+                    value={file.data_end_row}
+                    onChange={e =>
+                      updateFile(fileIndex, 'data_end_row', Number(e.target.value) || 0)
+                    }
+                    placeholder="e.g. 100"
+                    style={inputStyle()}
+                  />
+                </Field>
+
+                <Field label="Start column">
+                  <input
+                    value={file.start_col}
+                    onChange={e => updateFile(fileIndex, 'start_col', e.target.value.toUpperCase())}
+                    placeholder="e.g. A"
+                    style={inputStyle()}
+                  />
+                </Field>
+
+                <Field label="End column">
+                  <input
+                    value={file.end_col}
+                    onChange={e => updateFile(fileIndex, 'end_col', e.target.value.toUpperCase())}
+                    placeholder="e.g. C"
+                    style={inputStyle()}
+                  />
+                </Field>
+
+                <Field label="Number of columns">
+                  <input
+                    type="number"
+                    value={file.number_of_columns}
+                    onChange={e => updateNumberOfColumns(fileIndex, e.target.value)}
+                    placeholder="e.g. 3"
+                    style={inputStyle()}
+                  />
+                </Field>
+              </div>
+
+              {fileError && (
+                <div className="status" style={{ marginTop: 12 }}>
+                  {fileError}
+                </div>
+              )}
+
+              <div style={{ marginTop: 18 }}>
+                <h4 style={{ marginBottom: 10 }}>Column Rules</h4>
+
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Column</th>
+                      <th>Expected Header</th>
+                      <th>Numeric</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {file.columns.map((col, colIndex) => (
+                      <tr key={`${file.rowId}-${colIndex}`}>
+                        <td style={{ width: 180 }}>
+                          <input
+                            value={col.column}
+                            onChange={e =>
+                              updateColumn(fileIndex, colIndex, 'column', e.target.value.toUpperCase())
+                            }
+                            placeholder="e.g. C"
+                            style={inputStyle('100%')}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            value={col.expected_header}
+                            onChange={e =>
+                              updateColumn(fileIndex, colIndex, 'expected_header', e.target.value)
+                            }
+                            placeholder="Expected header text"
+                            style={inputStyle('100%')}
+                          />
+                        </td>
+                        <td style={{ width: 120 }}>
+                          <label
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 8,
+                              color: 'var(--fg-muted)',
+                              fontSize: 13
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={col.numeric}
+                              onChange={e =>
+                                updateColumn(fileIndex, colIndex, 'numeric', e.target.checked)
+                              }
+                            />
+                            Numeric
+                          </label>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })}
+
+        {error && (
+          <div className="status" style={{ marginTop: 20 }}>
+            {error}
+          </div>
+        )}
+
+        {result && (
+          <div
+            style={{
+              marginTop: 28,
+              padding: 18,
+              background: 'rgba(255,255,255,0.03)',
+              border: '1px solid var(--border)',
+              borderRadius: 12
+            }}
+          >
+            <div className="status" style={{ marginBottom: 14 }}>
+              {result.overallStatus} | Files: {result.fileCount} | Passed: {result.passedFiles} |
+              Failed: {result.failedFiles}
+            </div>
+
+            {result.overallStatus === 'PASS' && (
+              <button
+                className="btn btn-primary"
+                style={{ marginBottom: 18 }}
+                onClick={() =>
+                  onContinue &&
+                  onContinue(
+                    result.files.map(rf => {
+                      const local = files.find(f => f.rowId === rf.rowId);
+                      
+                      // Merge the backend column results (actualHeader) with the local config (numeric)
+                      const mergedColumns = (rf.columns || []).map((backendCol, idx) => {
+                        const localCol = local?.columns?.[idx] || {};
+                        return {
+                          ...backendCol,
+                          numeric: localCol.numeric || false
+                        };
+                      });
+
+                      return {
+                        ...rf,
+                        fileLabel: local?.fileLabel,
+                        columns: mergedColumns
+                      };
+                    })
+                  )
+                }
+              >
+                Continue to Processing →
+              </button>
+            )}
+
+            {result.files.map((file, fileIndex) => (
+              <div key={`${file.fileName}-${fileIndex}`} style={{ marginTop: fileIndex ? 24 : 0 }}>
+                <h3 style={{ marginBottom: 8 }}>
+                  {file.fileName} — {file.sheetName} — {file.status}
+                </h3>
+
+                {file.validatedPath && (
+                  <div className="status" style={{ marginBottom: 8 }}>
+                    Validated sheet written to: {file.validatedPath}
+                  </div>
+                )}
+
+                {file.errors.map((item, idx) => (
+                  <div key={idx} className="status" style={{ color: '#ff8c8c', marginBottom: 8 }}>
+                    {item}
+                  </div>
+                ))}
+
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Column</th>
+                      <th>Expected</th>
+                      <th>Actual</th>
+                      <th>Header Match</th>
+                      <th>Non Blank Count</th>
+                      <th>Numeric Sum</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {file.columns.map((col, idx) => (
+                      <tr key={idx}>
+                        <td>{col.column}</td>
+                        <td>{col.expectedHeader}</td>
+                        <td>{col.actualHeader}</td>
+                        <td>{String(col.headerMatch)}</td>
+                        <td>{col.nonBlankCount}</td>
+                        <td>{col.numericSum ?? '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      
+      {previewRow && (
+        <PreviewModal row={previewRow} onClose={() => setPreviewRow(null)} />
+      )}
+    </div>
+  );
+}

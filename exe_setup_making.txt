@@ -1,0 +1,8 @@
+make py exe
+python -m PyInstaller --onedir --name app app.py
+python -m PyInstaller --onedir excel_validation.py
+python -m PyInstaller --onedir trial_balance.py
+
+make electron exe
+$env:CSC_IDENTITY_AUTO_DISCOVERY="false"
+npm run dist:win                        

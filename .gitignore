@@ -1,0 +1,22 @@
+# Node & Electron
+node_modules/
+dist/
+dist-renderer/
+out/
+.env
+
+# Python & PyInstaller
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+python_backend/build/
+python_backend/dist/
+python_backend/*.spec
+venv/
+env/
+.venv/
+
+# App Specific Outputs
+converted/
+output/
